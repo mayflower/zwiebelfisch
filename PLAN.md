@@ -327,7 +327,7 @@ Eigene Error-Hierarchie:
 
 ## Phasen-Plan
 
-### Phase 1: Fundament (Woche 1-2)
+### Phase 1: Fundament
 - Projekt initialisieren (npm, TypeScript, Fastify, Zod, Docker)
 - Fastify App Factory mit `fastify-type-provider-zod` einrichten
 - Zod-Schemas anlegen (`env.schema.ts`, `conversion.schema.ts`, `validation.schema.ts`)
@@ -344,7 +344,7 @@ Eigene Error-Hierarchie:
 
 **Ergebnis:** Service laeuft auf Minikube via `tilt up`, akzeptiert XML, erkennt Format, validiert via KoSIT.
 
-### Phase 2: ZUGFeRD PDF-Operationen + Web-UI (Woche 3-4)
+### Phase 2: ZUGFeRD PDF-Operationen + Web-UI
 - `@stafyniaksacha/facturx` integrieren (`extract()` + `generate()`)
 - `zugferd-pdf.service.ts`
 - `pdf-render.service.ts` -- pdfmake Integration
@@ -356,7 +356,7 @@ Eigene Error-Hierarchie:
 
 **Ergebnis:** CII-zu-ZUGFeRD und ZUGFeRD-zu-CII funktionieren. Buchhalter kann via Web-UI Dateien konvertieren und validieren.
 
-### Phase 3: CII <-> UBL Transformation (Woche 4-5)
+### Phase 3: CII <-> UBL Transformation
 - SaxonJS + `xslt3` Build-Pipeline
 - CII-to-UBL XSLT (SFTI Repository) -> SEF kompilieren
 - UBL-to-CII XSLT schreiben (basierend auf EN 16931 Mapping-Tabelle) -> SEF
@@ -366,7 +366,7 @@ Eigene Error-Hierarchie:
 
 **Ergebnis:** Volle bidirektionale Konvertierung (CII/UBL <-> ZUGFeRD).
 
-### Phase 4: Profil-Support + Schematron (Woche 6)
+### Phase 4: Profil-Support + Schematron
 - ZUGFeRD-Profil-Erkennung und -Mapping
 - Profilspezifische Validierung
 - `node-schematron` Integration fuer In-Process EN16931 + XRechnung CIUS
@@ -376,7 +376,7 @@ Eigene Error-Hierarchie:
 
 **Ergebnis:** Profilbewusste Konvertierung mit dualer Validierung.
 
-### Phase 5: Haertung + Produktionsreife (Woche 7-8)
+### Phase 5: Haertung + Produktionsreife
 - Request-Logging (pino)
 - OpenAPI/Swagger Docs (`@fastify/swagger` -- Schemas werden automatisch aus Zod generiert via `fastify-type-provider-zod`)
 - Rate Limiting
