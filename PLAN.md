@@ -60,6 +60,8 @@ zwiebelfisch/
 │   ├── xslt/
 │   │   ├── cii-to-ubl.sef.json    # Vorkompiliertes XSLT (SaxonJS SEF)
 │   │   └── ubl-to-cii.sef.json
+│   ├── public/
+│   │   └── index.html              # Web-UI: Datei-Upload, Konvertierung, Validierung
 │   ├── plugins/
 │   │   └── multipart.ts            # Fastify Multipart Config
 │   ├── errors/
@@ -157,6 +159,7 @@ Statt alle ~150 Business Terms in ein TypeScript-Objektmodell zu mappen, arbeite
 | Schematron-Validierung | **node-schematron** | Reines JS, XPath 3.1, kein Java noetig |
 | XSD + Vollvalidierung | **KoSIT Validator** (Docker Sidecar) | Offizieller deutscher Validator, umfassend |
 | PDF-Rendering | **pdfmake** | Deklarative Dokumentdefinition (JSON), Tabellen/Spalten/Kopf-/Fusszeilen eingebaut, kein Browser noetig, ~5MB statt ~400MB |
+| Statische Dateien | **@fastify/static** | Web-UI (`index.html`) ausliefern, kein separater Webserver noetig |
 
 ---
 
@@ -235,6 +238,29 @@ Typen werden direkt aus den Zod-Schemas abgeleitet (`z.infer<>`), kein manuelles
 3. **XRechnung CIUS:** via `node-schematron` mit offiziellen KoSIT-Schematron-Regeln
 
 **Primaerer Validierungspfad:** KoSIT Validator (umfassend, autoritativ). `node-schematron` als schnelles In-Process-Feedback.
+
+---
+
+## Web-UI
+
+Statische HTML-Seite (`src/public/index.html`), ausgeliefert via `@fastify/static`. Kein Framework, kein Build-Step, Vanilla JS.
+
+**Zielgruppe:** Buchhalter (Windows, klickbare Oberflaeche, kein API-Zugang).
+
+**Bereiche:**
+- **Konvertieren:** Datei hochladen (Drag & Drop oder Datei-Auswahl), Richtung waehlen (XRechnung->ZUGFeRD / ZUGFeRD->XRechnung), Optionen (Profil, Output-Syntax), Ergebnis als Download
+- **Validieren:** Datei hochladen, Validierungsbericht anzeigen (valide/invalide, Fehler/Warnungen)
+
+**Bewusst nicht enthalten in V1:** Keine Historie, kein Login, kein Dashboard, kein Batch-Upload. Falls hoehere Anforderungen entstehen, kann spaeter ein separates Frontend-Projekt davorgeschaltet werden -- die REST-API bleibt unabhaengig nutzbar.
+
+---
+
+## Authentifizierung
+
+Keine Authentifizierung in V1. Begruendung:
+- Stateless Service, keine Benutzerdaten, keine Sessions
+- Deployment im Firmen-Cluster ohne externen Ingress (nur Firmennetzwerk)
+- Falls spaeter externer Zugang noetig: API-Key-Header oder vorgeschalteter OAuth-Proxy (z.B. oauth2-proxy) -- ohne Aenderung an Zwiebelfisch selbst
 
 ---
 
@@ -318,16 +344,17 @@ Eigene Error-Hierarchie:
 
 **Ergebnis:** Service laeuft auf Minikube via `tilt up`, akzeptiert XML, erkennt Format, validiert via KoSIT.
 
-### Phase 2: ZUGFeRD PDF-Operationen (Woche 3)
+### Phase 2: ZUGFeRD PDF-Operationen + Web-UI (Woche 3-4)
 - `@stafyniaksacha/facturx` integrieren (`extract()` + `generate()`)
 - `zugferd-pdf.service.ts`
 - `pdf-render.service.ts` -- pdfmake Integration
 - `invoice.template.ts` -- pdfmake Dokumentdefinition fuer Rechnungslayout
 - `POST /convert/xrechnung-to-zugferd` (nur CII-Input)
 - `POST /convert/zugferd-to-xrechnung` (nur CII-Output)
+- `@fastify/static` einrichten + `index.html` (Konvertieren + Validieren UI)
 - Integrationstests mit echten ZUGFeRD-PDFs
 
-**Ergebnis:** CII-zu-ZUGFeRD und ZUGFeRD-zu-CII funktionieren.
+**Ergebnis:** CII-zu-ZUGFeRD und ZUGFeRD-zu-CII funktionieren. Buchhalter kann via Web-UI Dateien konvertieren und validieren.
 
 ### Phase 3: CII <-> UBL Transformation (Woche 4-5)
 - SaxonJS + `xslt3` Build-Pipeline
