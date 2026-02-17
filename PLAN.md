@@ -22,7 +22,7 @@ zwiebelfisch/
 ├── tsconfig.json
 ├── .env.example
 ├── docker-compose.yml              # KoSIT Validator + App (Fallback)
-├── Dockerfile
+├── Dockerfile                       # Multi-Stage: node Build -> gcr.io/distroless/nodejs22-debian12
 ├── Tiltfile                        # Lokale K8s-Entwicklung mit Tilt
 ├── k8s/
 │   ├── deployment.yaml             # App Deployment + Service
@@ -31,11 +31,12 @@ zwiebelfisch/
 ├── jest.config.ts
 ├── src/
 │   ├── index.ts                    # Bootstrap Fastify
-│   ├── config.ts                   # Env-Konfiguration
-│   ├── app.ts                      # Fastify App Factory
+│   ├── config.ts                   # Env-Konfiguration (validiert via Zod env.schema.ts)
+│   ├── app.ts                      # Fastify App Factory (mit Zod Type Provider)
 │   ├── routes/
 │   │   ├── convert.ts              # POST /convert/xrechnung-to-zugferd
 │   │   │                           # POST /convert/zugferd-to-xrechnung
+│   │   │                           # Request-Validierung via Zod-Schemas
 │   │   ├── validate.ts             # POST /validate
 │   │   └── health.ts               # GET /health
 │   ├── services/
@@ -44,15 +45,16 @@ zwiebelfisch/
 │   │   ├── conversion.service.ts   # Pipeline-Orchestrator
 │   │   ├── cii-ubl-transform.service.ts  # CII<->UBL via SaxonJS/XSLT
 │   │   ├── zugferd-pdf.service.ts  # PDF/A-3 Erzeugung + XML-Extraktion
-│   │   ├── pdf-render.service.ts   # HTML -> PDF via Puppeteer
+│   │   ├── pdf-render.service.ts   # Invoice-Daten -> PDF via pdfmake
 │   │   └── validation.service.ts   # XSD + Schematron + KoSIT
-│   ├── models/
-│   │   ├── invoice.model.ts        # Typen fuer Invoice-Daten
-│   │   ├── conversion-request.ts   # Request/Response DTOs
-│   │   └── validation-result.ts    # Validierungsergebnis-Typen
+│   ├── zod/
+│   │   ├── invoice.schema.ts       # Zod-Schemas fuer Invoice-Daten (Typen via z.infer<>)
+│   │   ├── conversion.schema.ts    # Zod-Schemas fuer Request/Response DTOs
+│   │   ├── validation.schema.ts    # Zod-Schemas fuer Validierungsergebnisse
+│   │   └── env.schema.ts           # Zod-Schema fuer Env-Konfiguration
 │   ├── templates/
-│   │   └── invoice.html            # Nunjucks Invoice-Template
-│   ├── schemas/
+│   │   └── invoice.template.ts     # pdfmake Dokumentdefinition fuer Rechnungslayout
+│   ├── standards/
 │   │   ├── xsd/                    # EN16931 CII + UBL XSD (vendored)
 │   │   └── schematron/             # EN16931 + XRechnung .sch (vendored)
 │   ├── xslt/
@@ -100,7 +102,7 @@ Input (XML)
 [4. Profil-Mapping] ── Daten fuer Ziel-ZUGFeRD-Profil pruefen
   │
   ▼
-[5. PDF rendern] ── HTML-Template -> PDF via Puppeteer
+[5. PDF rendern] ── Invoice-Daten -> PDF via pdfmake
   │
   ▼
 [6. PDF/A-3 erzeugen] ── CII-XML in PDF einbetten (@stafyniaksacha/facturx)
@@ -147,14 +149,14 @@ Statt alle ~150 Business Terms in ein TypeScript-Objektmodell zu mappen, arbeite
 | Zweck | Bibliothek | Begruendung |
 |---|---|---|
 | HTTP Framework | **Fastify** v5 | Schnell, TypeScript-first, Schema-Validierung, `@fastify/multipart` |
+| Request/Config-Validierung | **Zod** + **fastify-type-provider-zod** | Typsichere Request-Validierung, Env-Validierung, automatische OpenAPI-Schema-Generierung aus Zod-Schemas |
 | XML aus PDF extrahieren + PDF/A-3 erzeugen | **@stafyniaksacha/facturx** | Einzige Node-Lib mit `extract()` und `generate()` fuer ZUGFeRD |
 | ZUGFeRD-Profil-Typen | **node-zugferd** | TypeScript-Typdefinitionen fuer alle 6 Profile |
 | CII <-> UBL Transformation | **saxon-js** + vorkompiliertes XSLT (SEF) | Einzige produktionsreife XSLT 3.0 Engine fuer Node.js |
 | XML Parsing | **fast-xml-parser** | Schnellster reiner JS XML-Parser |
 | Schematron-Validierung | **node-schematron** | Reines JS, XPath 3.1, kein Java noetig |
 | XSD + Vollvalidierung | **KoSIT Validator** (Docker Sidecar) | Offizieller deutscher Validator, umfassend |
-| PDF-Rendering | **Puppeteer** | HTML+CSS -> PDF, natuerliches Layout fuer Rechnungen |
-| HTML-Templating | **Nunjucks** | Ausgereift, Jinja2-kompatibel |
+| PDF-Rendering | **pdfmake** | Deklarative Dokumentdefinition (JSON), Tabellen/Spalten/Kopf-/Fusszeilen eingebaut, kein Browser noetig, ~5MB statt ~400MB |
 
 ---
 
@@ -215,7 +217,18 @@ Health-Check inkl. KoSIT-Validator-Erreichbarkeit.
 
 ---
 
-## Validierungsstrategie: Drei Stufen
+## Validierungsstrategie: Zwei Ebenen
+
+### Ebene 1: API-Validierung (Zod)
+
+Request-Parameter und Konfiguration werden beim Eingang via Zod validiert:
+- Multipart-Felder (`profile`, `outputSyntax`, `validate`, `standard`) gegen Zod-Enums
+- Env-Variablen beim App-Start gegen `env.schema.ts`
+- Response-Shapes fuer konsistente API-Antworten
+
+Typen werden direkt aus den Zod-Schemas abgeleitet (`z.infer<>`), kein manuelles Doppeln.
+
+### Ebene 2: Fachliche Rechnungsvalidierung (XSD + Schematron)
 
 1. **Strukturell (XSD):** via KoSIT Validator Docker Sidecar (HTTP POST)
 2. **Geschaeftsregeln (EN16931 Schematron):** via `node-schematron` in-process + KoSIT als Fallback
@@ -230,15 +243,17 @@ Health-Check inkl. KoSIT-Validator-Erreichbarkeit.
 Fuer die Richtung XRechnung->ZUGFeRD wird ein visuelles PDF benoetigt:
 
 1. CII-XML parsen -> Business Terms extrahieren
-2. HTML-Template (Nunjucks) rendern mit deutschem Rechnungslayout:
+2. pdfmake-Dokumentdefinition (`invoice.template.ts`) befuellen mit deutschem Rechnungslayout:
    - Kopf: Verkaeufer, Rechnungsnr., Datum
    - Empfaenger-Block
    - Positionstabelle: Artikelbezeichnung, Menge, Einzelpreis, MwSt., Gesamtpreis
    - Summen-Block: Netto, MwSt.-Aufschluesselung, Brutto, Faelliger Betrag
    - Zahlungsinformationen: IBAN/BIC, Verwendungszweck
    - Fusszeile: Steuernummer, Handelsregister (Pflichtangaben nach UStG)
-3. Puppeteer rendert HTML -> PDF
+3. pdfmake rendert Dokumentdefinition -> PDF-Buffer (in-memory, kein Browser)
 4. `@stafyniaksacha/facturx` wandelt PDF -> PDF/A-3 und bettet XML ein
+
+**Warum pdfmake statt Puppeteer:** Rechnungen sind strukturierte Geschaeftsdokumente (Tabellen, Spalten, Kopf-/Fusszeilen) -- genau pdfmakes Kernkompetenz. Kein ~400MB Chrome-Binary im Docker-Image, kein Browser-Pool fuer Parallelitaet, Rendering in Millisekunden statt Sekunden.
 
 ---
 
@@ -251,7 +266,7 @@ Eigene Error-Hierarchie:
   - `ValidationError` (422) -- Validierung fehlgeschlagen, mit strukturierten Fehlern
   - `ExtractionError` (422) -- kein XML in PDF gefunden
   - `TransformationError` (500) -- XSLT-Fehler
-  - `PdfRenderError` (500) -- Puppeteer-Fehler
+  - `PdfRenderError` (500) -- pdfmake-Fehler
 
 **Wichtiger Edge Case:** ZUGFeRD Minimum/Basic WL Profile enthalten keine Positionsdaten. Konvertierung zu XRechnung (erfordert Positionen, BR-16) ist nicht moeglich -> klare Fehlermeldung.
 
@@ -287,15 +302,17 @@ Eigene Error-Hierarchie:
 ## Phasen-Plan
 
 ### Phase 1: Fundament (Woche 1-2)
-- Projekt initialisieren (npm, TypeScript, Fastify, Docker)
-- Dockerfile erstellen (Multi-Stage Build)
+- Projekt initialisieren (npm, TypeScript, Fastify, Zod, Docker)
+- Fastify App Factory mit `fastify-type-provider-zod` einrichten
+- Zod-Schemas anlegen (`env.schema.ts`, `conversion.schema.ts`, `validation.schema.ts`)
+- Dockerfile erstellen (Multi-Stage Build, Distroless Runtime)
 - K8s-Manifeste (`k8s/`) + Tiltfile fuer lokale Entwicklung auf Minikube
 - Docker Compose als Fallback / CI-Umgebung
 - `detection.service.ts` -- Format-Erkennung
 - `xml-parser.service.ts` -- CII-XML parsen
 - KoSIT-Validator als K8s-Deployment
 - `validation.service.ts` -- KoSIT-HTTP-Integration
-- `GET /health` + `POST /validate` Endpunkte
+- `GET /health` + `POST /validate` Endpunkte (Request-Validierung via Zod)
 - Unit Tests fuer Detection und Parsing
 - Testdaten beschaffen
 
@@ -304,8 +321,8 @@ Eigene Error-Hierarchie:
 ### Phase 2: ZUGFeRD PDF-Operationen (Woche 3)
 - `@stafyniaksacha/facturx` integrieren (`extract()` + `generate()`)
 - `zugferd-pdf.service.ts`
-- `pdf-render.service.ts` -- Puppeteer + Nunjucks
-- HTML-Rechnungs-Template
+- `pdf-render.service.ts` -- pdfmake Integration
+- `invoice.template.ts` -- pdfmake Dokumentdefinition fuer Rechnungslayout
 - `POST /convert/xrechnung-to-zugferd` (nur CII-Input)
 - `POST /convert/zugferd-to-xrechnung` (nur CII-Output)
 - Integrationstests mit echten ZUGFeRD-PDFs
@@ -334,15 +351,43 @@ Eigene Error-Hierarchie:
 
 ### Phase 5: Haertung + Produktionsreife (Woche 7-8)
 - Request-Logging (pino)
-- OpenAPI/Swagger Docs (`@fastify/swagger`)
+- OpenAPI/Swagger Docs (`@fastify/swagger` -- Schemas werden automatisch aus Zod generiert via `fastify-type-provider-zod`)
 - Rate Limiting
-- Puppeteer-Pool fuer Parallelitaet
 - Graceful Shutdown
 - CI/CD Pipeline (GitHub Actions)
 - Lasttests
 - Dokumentation
 
 **Ergebnis:** Produktionsfaehiges Docker-Image, bereit fuer K8s-Deployment.
+
+---
+
+## Dockerfile: Multi-Stage Distroless Build
+
+```dockerfile
+# Build Stage
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Production Stage
+FROM gcr.io/distroless/nodejs22-debian12
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
+EXPOSE 3000
+CMD ["dist/index.js"]
+```
+
+**Warum Distroless:**
+- ~50MB Runtime-Image statt ~300MB+ mit `node:22-slim`
+- Keine Shell, kein Paketmanager, keine System-Utilities -> minimale Angriffsflaeche
+- Moeglich durch pdfmake-Entscheidung: keine nativen System-Dependencies (Puppeteer/Chrome haette Distroless ausgeschlossen)
+- Debugging via `kubectl logs` + strukturiertes Logging (pino), nicht via `kubectl exec`
 
 ---
 
